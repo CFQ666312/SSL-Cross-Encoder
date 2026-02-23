@@ -11,7 +11,7 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
 import tqdm
 
-# -----------------------
+# ----------------
 # Your project imports
 # -----------------------
 # Models (you can also do: from src.models import Cross_Sim, AE, LSP, ...
