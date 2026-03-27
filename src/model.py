@@ -195,7 +195,6 @@ class ViTEncoder(nn.Module):
 class MAEDecoder(nn.Module):
     """
     Simple MAE-style decoder to reconstruct volume from tokens.
-    NOTE: This assumes N is a perfect cube (for 64^3 with 8^3 patch, N=512, cube root=8).
     """
     def __init__(self, embed_dim=1024, decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16, patch_size=(8, 8, 8), out_ch=1):
         super().__init__()
@@ -263,7 +262,7 @@ class Cross_Sim(nn.Module):
     CNN Cross-Sim (your original logic):
       - encode img1,img2 -> z1,z2 (flatten)
       - split into s/d by ratio selection
-      - swap s between paired scans
+      - swap between paired scans
       - decode recon
       - optional input-gradient reg computed outside via compute_img_gradients
     """
@@ -431,7 +430,7 @@ class LSP(nn.Module):
 # =========================================================
 class CLS(nn.Module):
     """
-    CNN classifier baseline (your previous CLS-style):
+    CNN classifier baseline:
       - encode img1,img2 (shared CNN)
       - use z1 or delta_z (here default: z1)
     """
