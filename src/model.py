@@ -12,7 +12,7 @@ from timm.models.vision_transformer import Block
 
 
 # =========================================================
-# 1) CNN building blocks
+# CNN building blocks
 # =========================================================
 class EncoderBlock(nn.Module):
     def __init__(self, in_num_ch, out_num_ch, kernel_size=3, conv_act="leaky_relu", dropout=0.0, num_conv=1):
@@ -145,7 +145,7 @@ class CNNDecoder3D(nn.Module):
 
 
 # =========================================================
-# 2) ViT (3D patch embedding + encoder + MAE-style decoder)
+# ViT (3D patch embedding + encoder + decoder)
 # =========================================================
 class PatchEmbed3D(nn.Module):
     """3D patch embedding for ViT"""
@@ -229,7 +229,7 @@ class MAEDecoder(nn.Module):
 
 
 # =========================================================
-# 3) Classifier (shared)
+# Classifier (shared)
 # =========================================================
 class Classifier(nn.Module):
     def __init__(self, latent_size=1024, inter_num_ch=64):
@@ -256,7 +256,7 @@ class Classifier(nn.Module):
 
 
 # =========================================================
-# 4) Cross-Sim (CNN)
+# Cross-Sim
 # =========================================================
 class Cross_Sim(nn.Module):
     """
@@ -336,126 +336,7 @@ class Cross_Sim(nn.Module):
 
 
 # =========================================================
-# 5) Cross-Sim (ViT)
-# =========================================================
-class Cross_Sim_ViT(nn.Module):
-    """
-    Your ViT Cross-Sim:
-      - ViTEncoder on 3D patches -> tokens
-      - selector chooses dynamic tokens (top-k with straight-through)
-      - swap dynamic part across timepoints (token-wise)
-      - MAE decoder reconstructs volume
-      - optional contrastive on pooled dynamic tokens
-    """
-    def __init__(self, img_size=(64, 64, 64), patch_size=(8, 8, 8), embed_dim=1024, depth=12, num_heads=16,
-                 dynamic_ratio=0.25, temperature=0.5):
-        super().__init__()
-        self.encoder = ViTEncoder(img_size=img_size, patch_size=patch_size, in_chans=1, embed_dim=embed_dim, depth=depth, num_heads=num_heads)
-        self.decoder = MAEDecoder(embed_dim=embed_dim, patch_size=patch_size, out_ch=1)
-        self.selection = dynamic_ratio     # dynamic token ratio
-        self.temperature = temperature
-
-        # learned selector per token
-        self.selector = nn.Sequential(
-            nn.Linear(embed_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1),
-        )
-
-    def forward(self, img1, img2):
-        bs = img1.shape[0]
-        img = torch.cat([img1, img2], dim=0).requires_grad_(True)
-        zs = self.encoder(img)                     # [2B, N+1, C]
-
-        zs_tokens = zs[:, 1:, :]                   # remove cls -> [2B, N, C]
-        z1, z2 = zs_tokens[:bs], zs_tokens[bs:]    # [B, N, C]
-
-        B, N, C = z1.shape
-        k = max(1, int(self.selection * N))
-
-        scores1 = self.selector(z1).squeeze(-1)    # [B, N]
-        scores2 = self.selector(z2).squeeze(-1)
-
-        topk_idx1 = scores1.topk(k, dim=1).indices
-        topk_idx2 = scores2.topk(k, dim=1).indices
-
-        hard1 = torch.zeros_like(scores1)
-        hard2 = torch.zeros_like(scores2)
-        hard1.scatter_(1, topk_idx1, 1.0)
-        hard2.scatter_(1, topk_idx2, 1.0)
-
-        # straight-through
-        soft1 = torch.sigmoid(scores1 / 0.1)
-        soft2 = torch.sigmoid(scores2 / 0.1)
-        mask1 = hard1 + (soft1 - soft1.detach())
-        mask2 = hard2 + (soft2 - soft2.detach())
-
-        d1 = z1 * mask1.unsqueeze(-1)
-        s1 = z1 * (1.0 - mask1).unsqueeze(-1)
-        d2 = z2 * mask2.unsqueeze(-1)
-        s2 = z2 * (1.0 - mask2).unsqueeze(-1)
-
-        # swap dynamic token contribution
-        z1_swapped_tokens = s1 + d2
-        z2_swapped_tokens = s2 + d1
-
-        # add cls back (use original cls from zs)
-        cls = zs[:, :1, :]  # [2B,1,C]
-        z1_swapped = torch.cat([cls[:bs], z1_swapped_tokens], dim=1)
-        z2_swapped = torch.cat([cls[bs:], z2_swapped_tokens], dim=1)
-
-        recon1 = self.decoder(z1_swapped)
-        recon2 = self.decoder(z2_swapped)
-
-        return [s1, s2], [d1, d2], [recon1, recon2], img
-
-    @staticmethod
-    def pool_dynamic(d):
-        return d.mean(dim=1)  # [B, C]
-
-    def compute_img_gradients(self, img, d1, d2, p=1):
-        """
-        Gradient reg on pooled dynamic tokens (as in your code).
-        """
-        zd = torch.cat([d1, d2], dim=0)          # [2B, N, C]
-        zd_pool = zd.mean(dim=1)                # [2B, C]
-        loss = (zd_pool ** 2).mean()
-        grads = torch.autograd.grad(loss, img, retain_graph=True, create_graph=False)[0]
-        if p == 1:
-            return grads.abs().sum()
-        elif p == 2:
-            return (grads ** 2).sum()
-        else:
-            raise ValueError("p must be 1 or 2")
-
-    @staticmethod
-    def compute_recon_loss(x, recon):
-        return ((x - recon) ** 2).mean()
-
-    @staticmethod
-    def compute_residual_loss(x1, recon1, x2, recon2):
-        return torch.abs((x1 - recon1) - (x2 - recon2)).mean()
-
-    def Contrastiveloss(self, d1, d2, batch_size):
-        proj_z1 = self.pool_dynamic(d1)
-        proj_z2 = self.pool_dynamic(d2)
-        z_i = F.normalize(proj_z1, dim=1)
-        z_j = F.normalize(proj_z2, dim=1)
-        reps = torch.cat([z_i, z_j], dim=0)
-        sim = F.cosine_similarity(reps.unsqueeze(1), reps.unsqueeze(0), dim=2)
-
-        sim_ij = torch.diag(sim, batch_size)
-        sim_ji = torch.diag(sim, -batch_size)
-        positives = torch.cat([sim_ij, sim_ji], dim=0)
-
-        nominator = torch.exp(positives / self.temperature)
-        denominator = (~torch.eye(batch_size * 2, batch_size * 2, dtype=torch.bool, device=reps.device)).float() * torch.exp(sim / self.temperature)
-        loss_partial = -torch.log(nominator / torch.sum(denominator, dim=1))
-        return loss_partial.mean()
-
-
-# =========================================================
-# 6) AE baseline (CNN)
+# AE baseline
 # =========================================================
 class AE(nn.Module):
     def __init__(self):
@@ -478,7 +359,7 @@ class AE(nn.Module):
 
 
 # =========================================================
-# 7) LSP baseline (CNN) - minimal kept
+#LSP baseline 
 # =========================================================
 class LSP(nn.Module):
     def __init__(self, latent_size=1024, num_neighbours=3, agg_method="gaussian", N_km=[120, 60, 30], device=None):
@@ -546,7 +427,7 @@ class LSP(nn.Module):
 
 
 # =========================================================
-# 8) CLS models (CNN + ViT)
+#  CLS models 
 # =========================================================
 class CLS(nn.Module):
     """
@@ -580,58 +461,6 @@ class CLS(nn.Module):
         return loss, torch.sigmoid(pred)
 
 
-class CLS_Cross_ViT(nn.Module):
-    """
-    ViT classifier with selector (as you posted):
-      - ViTEncoder -> tokens
-      - selector top-k tokens as dynamic -> mean pool -> MLP classifier
-    """
-    def __init__(self, img_size=(64, 64, 64), patch_size=(8, 8, 8), embed_dim=1024, depth=12, num_heads=16, dynamic_ratio=0.25):
-        super().__init__()
-        self.encoder = ViTEncoder(img_size=img_size, patch_size=patch_size, in_chans=1, embed_dim=embed_dim, depth=depth, num_heads=num_heads)
-        self.selection = dynamic_ratio
-        self.classifier = Classifier(latent_size=embed_dim, inter_num_ch=64)
-        self.selector = nn.Sequential(
-            nn.Linear(embed_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1),
-        )
-
-    def forward(self, img1, img2, interval=None):
-        bs = img1.shape[0]
-        img = torch.cat([img1, img2], dim=0)
-        zs = self.encoder(img)               # [2B, N+1, C]
-        tokens = zs[:, 1:, :]                # [2B, N, C]
-        z1, z2 = tokens[:bs], tokens[bs:]    # [B, N, C]
-        B, N, C = z1.shape
-        k = max(1, int(self.selection * N))
-
-        scores1 = self.selector(z1).squeeze(-1)
-        scores2 = self.selector(z2).squeeze(-1)
-
-        topk_idx1 = scores1.topk(k, dim=1).indices
-        topk_idx2 = scores2.topk(k, dim=1).indices
-
-        mask1 = torch.zeros_like(scores1)
-        mask2 = torch.zeros_like(scores2)
-        mask1.scatter_(1, topk_idx1, 1.0)
-        mask2.scatter_(1, topk_idx2, 1.0)
-
-        soft1 = torch.sigmoid(scores1 / 0.1)
-        soft2 = torch.sigmoid(scores2 / 0.1)
-        mask1_st = mask1 + (soft1 - soft1.detach())
-        mask2_st = mask2 + (soft2 - soft2.detach())
-
-        d1 = z1 * mask1_st.unsqueeze(-1)
-        d_pool = d1.mean(dim=1)              # [B, C]
-        pred = self.classifier(d_pool)
-        return pred
-
-    @staticmethod
-    def compute_classification_loss(pred, label, pos_weight=1.0):
-        loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight], device=pred.device, dtype=torch.float))(pred.squeeze(1), label.float())
-        return loss, torch.sigmoid(pred)
-
 
 __all__ = [
     # CNN blocks
@@ -645,10 +474,8 @@ __all__ = [
     "MAEDecoder",
     # Models
     "Cross_Sim",
-    "Cross_Sim_ViT",
     "AE",
     "LSP",
     "CLS",
-    "CLS_Cross_ViT",
     "Classifier",
 ]
