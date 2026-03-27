@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ViT blocks from timm
+
 from timm.models.vision_transformer import Block
 
 
