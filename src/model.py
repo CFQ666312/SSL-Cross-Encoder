@@ -302,7 +302,7 @@ class Cross_Sim(nn.Module):
         """
         zd = torch.cat([d1, d2], dim=0)
         loss = (zd ** 2).mean()
-        grads = torch.autograd.grad(loss, img, retain_graph=True, create_graph=False)[0]
+        grads = torch.autograd.grad(loss, img, retain_graph=True, create_graph=True)[0]
         if p == 1:
             return grads.abs().sum()
         elif p == 2:
@@ -319,6 +319,31 @@ class Cross_Sim(nn.Module):
         return torch.abs((x1 - recon1) - (x2 - recon2)).mean()
 
     def Contrastiveloss(self, proj_z1, proj_z2, batch_size):
+        s1 = F.normalize(proj_z1, dim=1)
+        s2 = F.normalize(proj_z2, dim=1)
+        reps = torch.cat([s1, s2], dim=0)
+    
+        sim = torch.matmul(reps, reps.t())
+        logits = sim / self.temperature + self.sigclr_bias
+    
+        device = reps.device
+        n = batch_size * 2
+    
+        subject_ids = torch.arange(batch_size, device=device).repeat(2)
+        labels = torch.where(
+            subject_ids[:, None] == subject_ids[None, :],
+            torch.ones(n, n, device=device),
+            -torch.ones(n, n, device=device),
+        )
+    
+        self_mask = torch.eye(n, dtype=torch.bool, device=device)
+    
+        loss = F.softplus(-labels * logits)
+        loss = loss.masked_fill(self_mask, 0.0)
+    
+        return loss.sum() / (~self_mask).sum()
+
+    def Contrastiveloss_SimCLR(self, proj_z1, proj_z2, batch_size):
         z_i = F.normalize(proj_z1, dim=1)
         z_j = F.normalize(proj_z2, dim=1)
         reps = torch.cat([z_i, z_j], dim=0)
