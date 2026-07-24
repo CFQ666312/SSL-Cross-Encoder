@@ -301,6 +301,7 @@ class Cross_Sim(nn.Module):
           - return L1 (p=1) or L2 (p=2) norm
         """
         zd = torch.cat([d1, d2], dim=0)
+        #loss = (zd ** 2).mean()
         loss = (zd ** 2).mean()
         grads = torch.autograd.grad(loss, img, retain_graph=True, create_graph=True)[0]
         if p == 1:
