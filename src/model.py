@@ -248,9 +248,6 @@ class Classifier(nn.Module):
                 nn.init.kaiming_normal_(m.weight, a=0, mode="fan_in", nonlinearity="relu")
 
     def forward(self, x):
-        # batch=1 -> bypass BN/Dropout
-        if x.size(0) == 1:
-            return self.fc[2:](x)
         return self.fc(x)
 
 
@@ -259,7 +256,7 @@ class Classifier(nn.Module):
 # =========================================================
 class Cross_Sim(nn.Module):
     """
-    CNN Cross-Sim (your original logic):
+    CNN Cross-Sim:
       - encode img1,img2 -> z1,z2 (flatten)
       - split into s/d by ratio selection
       - swap between paired scans
@@ -294,12 +291,6 @@ class Cross_Sim(nn.Module):
         return [s1, s2], [d1, d2], [recon1, recon2], img
 
     def compute_img_gradients(self, img, d1, d2, p=1):
-        """
-        Input-gradient regularization:
-          - build a simple loss on d (mean squared)
-          - compute grad wrt img
-          - return L1 (p=1) or L2 (p=2) norm
-        """
         zd = torch.cat([d1, d2], dim=0)
         #loss = (zd ** 2).mean()
         loss = (zd ** 2).mean()
