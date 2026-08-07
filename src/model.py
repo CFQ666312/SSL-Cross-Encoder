@@ -423,35 +423,45 @@ class LSP(nn.Module):
 # =========================================================
 class CLS(nn.Module):
     """
-    CNN classifier baseline:
-      - encode img1,img2 (shared CNN)
-      - use z1 or delta_z (here default: z1)
+    CNN classifier:
+      - encode paired scans using a shared CNN encoder
+      - optionally classify using only the dynamic part of the latent representation
     """
-    def __init__(self, dropout=False):
+    def __init__(self, dropout=False, use_dynamic=False, selection=75):
         super().__init__()
         self.encoder = CNNEncoder3D(in_num_ch=1, inter_num_ch=16, num_conv=1, dropout=dropout)
-        self.classifier = Classifier(latent_size=1024, inter_num_ch=64)
+        self.use_dynamic = use_dynamic
+        self.selection = selection
+
+        latent_dim = int(1024 * (1 - selection)) if use_dynamic else 1024
+        self.classifier = Classifier(latent_size=latent_dim, inter_num_ch=64)
 
     def forward(self, img1, img2, interval=None):
         bs = img1.shape[0]
         zs = self.encoder(torch.cat([img1, img2], 0))
         zs_flat = zs.view(bs * 2, -1)
         z1, z2 = zs_flat[:bs], zs_flat[bs:]
-        # delta_z = (z2 - z1) / interval.unsqueeze(1) if interval is not None else (z2 - z1)
-        pred = self.classifier(z1)
+
+        if self.use_dynamic:
+            split_size = int(z1.size(1) * self.selection)
+            feat = z1[:, split_size:]
+        else:
+            feat = z1
+
+        pred = self.classifier(feat)
         return pred
 
     def forward_single(self, img):
         z = self.encoder(img).view(img.shape[0], -1)
-        pred = self.classifier(z)
-        return pred, z
 
-    @staticmethod
-    def compute_classification_loss(pred, label, pos_weight=1.0):
-        # label assumed already mapped to {0,1}
-        loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight], device=pred.device, dtype=torch.float))(pred.squeeze(1), label.float())
-        return loss, torch.sigmoid(pred)
+        if self.use_dynamic:
+            split_size = int(z.size(1) * self.selection)
+            feat = z[:, split_size:]
+        else:
+            feat = z
 
+        pred = self.classifier(feat)
+        return pred, feat
 
 
 __all__ = [
