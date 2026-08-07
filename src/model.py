@@ -351,32 +351,8 @@ class Cross_Sim(nn.Module):
         return loss_partial.mean()
 
 
-# =========================================================
-# AE baseline
-# =========================================================
-class AE(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.encoder = CNNEncoder3D(in_num_ch=1, inter_num_ch=16, num_conv=1)
-        self.decoder = CNNDecoder3D(out_num_ch=1, inter_num_ch=16, num_conv=1)
-
-    def forward(self, img1, img2):
-        bs = img1.shape[0]
-        zs = self.encoder(torch.cat([img1, img2], 0))
-        zs_flat = zs.view(bs * 2, -1)
-        z1, z2 = zs_flat[:bs], zs_flat[bs:]
-        recon = self.decoder(zs_flat)
-        recon1, recon2 = recon[:bs], recon[bs:]
-        return [z1, z2], [recon1, recon2]
-
-    @staticmethod
-    def compute_recon_loss(x, recon):
-        return ((x - recon) ** 2).mean()
 
 
-# =========================================================
-#LSP baseline 
-# =========================================================
 class LSP(nn.Module):
     def __init__(self, latent_size=1024, num_neighbours=3, agg_method="gaussian", N_km=[120, 60, 30], device=None):
         super().__init__()
@@ -490,7 +466,6 @@ __all__ = [
     "MAEDecoder",
     # Models
     "Cross_Sim",
-    "AE",
     "LSP",
     "CLS",
     "Classifier",
