@@ -430,7 +430,7 @@ class CLS(nn.Module):
       - encode paired scans using a shared CNN encoder
       - optionally classify using only the dynamic part of the latent representation
     """
-    def __init__(self, dropout=False, use_dynamic=False, selection):
+    def __init__(self, dropout=False, use_dynamic=False, selection=0.75):
         super().__init__()
         self.encoder = CNNEncoder3D(in_num_ch=1, inter_num_ch=16, num_conv=1, dropout=dropout)
         self.use_dynamic = use_dynamic
