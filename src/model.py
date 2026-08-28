@@ -294,7 +294,7 @@ class Cross_Sim(nn.Module):
     def compute_img_gradients(self, img, d1, d2, p=1):
         zd = torch.cat([d1, d2], dim=0)
         #loss = (zd ** 2).mean()
-        loss = zd.sum()
+        loss = zd.abs().sum()
         grads = torch.autograd.grad(loss, img, retain_graph=True, create_graph=True)[0]
         if p == 1:
             return grads.abs().sum()
