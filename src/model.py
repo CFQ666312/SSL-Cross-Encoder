@@ -269,6 +269,7 @@ class Cross_Sim(nn.Module):
         self.decoder = CNNDecoder3D(out_num_ch=1, inter_num_ch=16, num_conv=1)
         self.selection = selection
         self.temperature = temperature
+        self.sigclr_bias = nn.Parameter(torch.tensor(-10.0))
 
     def forward(self, img1, img2):
         bs = img1.shape[0]
@@ -305,7 +306,7 @@ class Cross_Sim(nn.Module):
     @staticmethod
     def compute_recon_loss(x, recon):
         recon_loss = torch.abs(x - recon).mean()
-        recon_loss = ((x - recon) ** 2).mean()
+        #recon_loss = ((x - recon) ** 2).mean()
         return recon_loss
 
     @staticmethod
